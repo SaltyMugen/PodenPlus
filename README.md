@@ -1,0 +1,42 @@
+# Poden+ for the web
+
+Poden+ on any computer or phone: the same app as Poden+ for Mac, running in the browser. It needs no server, no account and no build step. Everything stays on the device.
+
+## Put it on GitHub Pages
+
+1. Create a repository (for example `poden`) and upload **the contents of this `web/` folder** to its root. Leave out `tools/` if you like.
+2. Go to **Settings → Pages → Build and deployment → Source: Deploy from a branch → `main` / `(root)`** and click Save.
+3. About a minute later it's live at `https://<you>.github.io/poden/`.
+
+All paths are relative, so it works from any sub-folder. `.nojekyll` is included so GitHub serves every file as-is.
+
+## On a phone: true full screen, like an app
+
+- **iPhone:** open the site in Safari, then **Share → Add to Home Screen**. Launched from the icon, it runs full screen with no Safari bars, has its own app switcher card, and keeps playing when you lock the phone or open another app. Lock screen and Control Centre controls work (play/pause, ±skip, scrubbing). Tapping the full-screen button in Safari shows these steps.
+- **Android:** use the full-screen button, or Chrome **⋮ → Install app**.
+- **Leaving the app:** when you switch away while an episode plays, Poden+ drops back to the mini player and the audio keeps going. The system media controls then act as the mini player on the lock screen and in the notification shade or Control Centre.
+
+## Moving your Mac library over
+
+On the Mac:
+
+```sh
+python3 tools/export-mac-library.py
+```
+
+This writes **Poden library.json** to your Desktop. It contains your shows, played state, positions, per-show settings and time saved, plus every scan and transcript the Mac app has made. Import it in **Settings → Library → Import…** (on a phone, AirDrop it to Files first). Nothing needs rescanning.
+
+## How the skipping works in a browser
+
+Browsers don't include Apple's sound classifier, so Poden+ web has its own detector:
+
+- A small neural network, trained on episodes Poden+ for Mac had already analysed, labels every second as speech, music or trailer. It works from loudness, spectral and rhythm features.
+- The Mac app's rules then run unchanged on top of those labels: merging, trailer cues, loudness growth, silence, audio fingerprints for jingles repeated across episodes, ads by language, transcript "voids" and automatic chapters.
+- Measured on episodes it did **not** train on, against the Mac app's results: about 91 % of the time the Mac skips is found, and about 85 % of what the web version skips matches the Mac.
+- Speed: a 3-hour episode scans in roughly 10–25 s in a background worker, so the interface never stutters. `tools/fit.js` retrains the model if you want to recalibrate.
+
+## Good to know
+
+- **Feeds and CORS:** many podcast hosts don't let web pages read their feeds or audio directly. Poden+ tries directly first, then public relays. For reliability, add your own relay in **Settings → Network**, for example a free Cloudflare Worker.
+- **Downloads** go into the browser's storage and play offline with instant seeking.
+- **Transcripts:** published transcripts (Podcasting 2.0) are used automatically. Transcripts made by the Mac app come across with the library import.
