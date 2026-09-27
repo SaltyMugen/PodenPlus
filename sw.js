@@ -1,6 +1,6 @@
 // Poden+ service worker: instant start (app shell from cache, updated in the background),
 // offline playback of downloads with proper range requests (needed for seeking), images cached.
-const V = 'poden-v1';
+const V = 'poden-v2';
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'js/app.js', 'js/model.js', 'js/player.js', 'js/views.js', 'js/analyzer.js', 'js/ui.js', 'js/transcript.js',
   'js/store.js', 'js/icons.js', 'js/textlib.js', 'js/detect-core.js', 'js/detect-model.js', 'js/worker.js', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 const AUDIO = 'poden-audio', IMG = 'poden-img';
@@ -19,14 +19,18 @@ self.addEventListener('fetch', e => {
   if (req.destination === 'image') { e.respondWith(image(req)); return; }
 });
 
-// Stale-while-revalidate for the app shell: opens instantly, picks up new versions next launch.
+// App files: network first with a short timeout (updates arrive immediately, no stale code after a
+// deploy), falling back to the cache instantly when offline or on a slow connection.
 async function shell(req, e) {
-  const c = await caches.open(V);
-  const key = req.mode === 'navigate' ? 'index.html' : req;
-  const hit = await c.match(key, { ignoreSearch: true });
-  const net = fetch(req).then(r => { if (r.ok && r.type === 'basic') c.put(key, r.clone()); return r; }).catch(() => null);
-  if (hit) { e.waitUntil(net); return hit; }
-  return (await net) || new Response('Offline', { status: 503 });
+  const c = await caches.open(V), key = req.mode === 'navigate' ? 'index.html' : req;
+  const net = fetch(req, { cache: 'no-cache' }).then(r => { if (r.ok && r.type === 'basic') c.put(key, r.clone()); return r; });
+  const hit = c.match(key, { ignoreSearch: true });
+  try {
+    return await Promise.race([net, new Promise((_, rej) => setTimeout(() => rej(0), 1500))]);
+  } catch (_) {
+    const h = await hit; if (h) { e.waitUntil(net.catch(() => {})); return h; }
+    try { return await net; } catch (_) { return new Response('Offline', { status: 503 }); }
+  }
 }
 
 async function image(req) {

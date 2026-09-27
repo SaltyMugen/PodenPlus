@@ -60,7 +60,8 @@ export async function loadLibrary() {
   reindex();
 }
 let saveT = 0;
-function saveShows() { clearTimeout(saveT); saveT = setTimeout(() => idb.set('kv', 'podcasts', lib.podcasts), 300); }
+function saveShows() { clearTimeout(saveT); saveT = setTimeout(() => (self.requestIdleCallback || setTimeout)(() => idb.set('kv', 'podcasts', lib.podcasts), { timeout: 2000 }), 400); }
+addEventListener('pagehide', () => { if (saveT) idb.set('kv', 'podcasts', lib.podcasts); });
 const saveMeta = () => { ls.set('prefs', lib.prefs); ls.set('upNext', lib.upNext); ls.set('skipped', lib.skipped); ls.set('skippedByKind', lib.skippedByKind); ls.set('validators', lib.validators); };
 
 export const epId = (e, showId) => e.guid ? `${showId || e.podcastID || ''}#${e.guid}` : e.audioURL;
@@ -103,52 +104,72 @@ export const skippedThisMonth = () => lib.skipped[month()] || 0;
 export const skippedTotal = () => Object.values(lib.skipped).reduce((a, b) => a + b, 0);
 export const skippedKind = k => Object.values(lib.skippedByKind).reduce((a, m) => a + (m[k] || 0), 0);
 
-// ---------- network: feeds via direct fetch, then relays ----------
-const RELAYS = [u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`];
-export async function fetchText(url, { headers, timeout = 12000 } = {}) {
-  const tries = [url];
-  if (settings.relay) tries.push(settings.relay.includes('{url}') ? settings.relay.replace('{url}', encodeURIComponent(url)) : settings.relay + encodeURIComponent(url));
-  for (const r of RELAYS) tries.push(r(url));
-  let last;
-  for (const u of tries) {
-    const c = new AbortController(), t = setTimeout(() => c.abort(), timeout);
-    try {
-      const res = await fetch(u, { headers: u === url ? headers : undefined, signal: c.signal, cache: 'no-store' });
-      clearTimeout(t);
-      if (res.status === 304) return { status: 304 };
-      if (!res.ok) { last = new Error('HTTP ' + res.status); continue; }
-      const text = await res.text();
-      if (!text) { last = new Error('empty'); continue; }
-      return { status: 200, text, etag: res.headers.get('etag'), modified: res.headers.get('last-modified') };
-    } catch (e) { clearTimeout(t); last = e; }
-  }
-  throw last || new Error('fetch failed');
+// ---------- network ----------
+// Most podcast hosts don't send CORS headers, so browsers can't read their feeds directly. Every fetch
+// races the direct URL against CORS relays (your own relay from Settings first); the first valid answer
+// wins and the rest are cancelled. The relay that worked is remembered per host, so the next fetch
+// from that host goes straight to it.
+const RELAYS = [
+  u => `https://proxy.corsfix.com/?${u}`,
+  u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+const own = u => settings.relay ? (settings.relay.includes('{url}') ? settings.relay.replace('{url}', encodeURIComponent(u)) : settings.relay + (settings.relay.endsWith('=') || settings.relay.endsWith('?') ? encodeURIComponent(u) : u)) : null;
+const winners = ls.get('relayWins', {});
+const hostOf = u => { try { return new URL(u).host; } catch (_) { return ''; } };
+export function routes(url) {
+  const all = [url, own(url), ...RELAYS.map(r => r(url))].filter(Boolean);
+  const w = winners[hostOf(url)];
+  if (w != null && all[w]) all.unshift(all.splice(w, 1)[0]);
+  return all;
 }
+export async function fetchText(url, { headers, timeout = 15000, valid = t => t.length > 0 } = {}) {
+  const all = routes(url), order = [url, own(url), ...RELAYS.map(r => r(url))].filter(Boolean);
+  const ctls = all.map(() => new AbortController());
+  const kill = setTimeout(() => ctls.forEach(c => c.abort()), timeout);
+  const one = async (u, i) => {
+    if (i > 0) await new Promise(r => setTimeout(r, i === 1 ? 0 : 250 * (i - 1)));   // stagger: don't hit every relay at once
+    if (ctls[i].signal.aborted) throw 0;
+    const res = await fetch(u, { headers: u === url ? headers : undefined, signal: ctls[i].signal, cache: 'no-store' });
+    if (res.status === 304) return { status: 304 };
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    if (!valid(text)) throw new Error('invalid');
+    return { status: 200, text, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), via: order.indexOf(u) };
+  };
+  try {
+    const r = await Promise.any(all.map(one));
+    if (r.via >= 0 && winners[hostOf(url)] !== r.via) { winners[hostOf(url)] = r.via; ls.set('relayWins', winners); }
+    return r;
+  } catch (_) { throw new Error('unreachable'); }
+  finally { clearTimeout(kill); ctls.forEach(c => c.abort()); }
+}
+const isFeed = t => /<rss[\s>]|<channel[\s>]|<feed[\s>]/i.test(t.slice(0, 4000));
 
-// RSS → show. DOMParser in the page (fast, native, streaming-free but fine for feeds).
-export function parseFeed(xml, feedURL) {
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  if (doc.querySelector('parsererror') && !doc.querySelector('channel')) throw new Error('Not a feed');
-  const ch = doc.querySelector('channel'); if (!ch) throw new Error('Not a feed');
-  const kid = (el, name) => { for (const c of el.children) if (c.tagName === name) return c; return null; };
-  const txt = (el, name) => { const c = kid(el, name); return c ? c.textContent.trim() : ''; };
-  const img = kid(ch, 'itunes:image')?.getAttribute('href') || kid(ch, 'image') && txt(kid(ch, 'image'), 'url') || null;
-  const showSummary = [txt(ch, 'description'), txt(ch, 'itunes:summary')].sort((a, b) => b.length - a.length)[0];
-  const show = { id: feedURL, feedURL, title: txt(ch, 'title') || new URL(feedURL).host, author: txt(ch, 'itunes:author') || null,
-    summary: T.plain(showSummary) || null, artworkURL: img, language: txt(ch, 'language') || null, episodes: [] };
-  for (const it of ch.getElementsByTagName('item')) {
-    const enc = kid(it, 'enclosure'); const url = enc && enc.getAttribute('url'); if (!url) continue;
-    let tr = null; for (const c of it.children) if (c.tagName === 'podcast:transcript') { const type = c.getAttribute('type') || ''; const rank = ['json', 'vtt', 'srt', 'subrip', 'html', 'plain'].findIndex(x => type.includes(x)); const r = rank < 0 ? 9 : rank; if (!tr || r < tr.rank) tr = { url: c.getAttribute('url'), type, rank: r }; }
-    const sums = [txt(it, 'description'), txt(it, 'itunes:summary'), txt(it, 'content:encoded')].sort((a, b) => b.length - a.length)[0];
-    const d = txt(it, 'pubDate'), dur = txt(it, 'itunes:duration');
-    const e = { guid: txt(it, 'guid') || null, title: txt(it, 'title'), audioURL: url, date: d ? Date.parse(d) || null : null,
-      duration: dur ? dur.split(':').reduce((a, b) => a * 60 + (+b || 0), 0) : null, summary: sums ? T.plain(sums) : null,
-      artworkURL: kid(it, 'itunes:image')?.getAttribute('href') || null, transcriptURL: tr?.url || null, transcriptType: tr?.type || null,
-      chaptersURL: kid(it, 'podcast:chapters')?.getAttribute('url') || null };
-    show.episodes.push(e);
+// Feed text → show, parsed in the worker (a 4 MB, 950-episode feed takes ~50 ms there, 0 ms on the page).
+let parseCall = null; export const setParser = f => parseCall = f;
+async function parse(text, url) { return parseCall ? parseCall(text, url) : PodenText.parseFeedXML(text, url); }
+
+// Apple's directory has CORS and every show: used when no route can read the feed itself.
+async function viaItunes(url, itunesId) {
+  let id = itunesId;
+  if (!id) {
+    const q = await fetch(`https://itunes.apple.com/search?media=podcast&entity=podcast&limit=50&term=${encodeURIComponent(hostOf(url).replace(/^(www|feeds?)\./, '').split('.')[0])}`).then(r => r.json()).catch(() => null);
+    id = q?.results?.find(r => r.feedUrl === url)?.collectionId;
   }
-  if (!show.episodes.length) throw new Error('No episodes');
-  return stamp(show);
+  if (!id) throw new Error('not in directory');
+  const j = await fetch(`https://itunes.apple.com/lookup?id=${id}&media=podcast&entity=podcastEpisode&limit=300`).then(r => r.json());
+  return PodenText.itunesShow(j, url);
+}
+export async function loadShow(url, { artwork, itunesId, headers } = {}) {
+  let r = null;
+  try { r = await fetchText(url, { headers, valid: t => isFeed(t) }); } catch (_) {}
+  if (r?.status === 304) return { unchanged: true };
+  let p;
+  if (r) p = await parse(r.text, url); else p = await viaItunes(url, itunesId);
+  if (artwork) p.artworkURL = artwork;
+  if (itunesId) p.itunesId = itunesId;
+  return { show: stamp(p), etag: r?.etag, modified: r?.modified };
 }
 export function stamp(p) {
   p.id = p.feedURL;
@@ -156,18 +177,21 @@ export function stamp(p) {
   return p;
 }
 
-export async function addShow(url, artwork) {
+// Adding is optimistic: the show appears in the Library at once (from the directory result), and fills
+// in when the feed arrives — no waiting on a spinner.
+export const adding = new Map();          // feedURL → placeholder title
+export async function addShow(url, artwork, itunesId, title) {
+  url = url.trim();
   const ex = lib.podcasts.find(p => p.feedURL === url); if (ex) return ex;
-  lib.busy++; lib.error = null; emit('busy');
+  if (adding.has(url)) return null;
+  adding.set(url, { title: title || hostOf(url), artwork }); lib.error = null; emit('library'); emit('busy');
   try {
-    const r = await fetchText(url);
-    const p = parseFeed(r.text, url);
-    if (artwork) { p.artworkURL = artwork; stamp(p); }
-    lib.podcasts.push(p); lib.validators[p.id] = { etag: r.etag, modified: r.modified };
-    reindex(); saveShows(); saveMeta(); emit('library');
-    return p;
-  } catch (e) { lib.error = 'Couldn’t load that feed'; emit('busy'); return null; }
-  finally { lib.busy--; emit('busy'); }
+    const { show } = await loadShow(url, { artwork, itunesId });
+    if (!lib.podcasts.some(p => p.feedURL === url)) lib.podcasts.push(show);
+    reindex(); saveShows(); saveMeta();
+    return show;
+  } catch (e) { lib.error = `Couldn’t load “${title || url}”`; return null; }
+  finally { adding.delete(url); emit('library'); emit('busy'); }
 }
 export function adopt(p) { if (lib.podcasts.some(x => x.feedURL === p.feedURL)) return; lib.podcasts.push(stamp(p)); reindex(); saveShows(); emit('library'); }
 export function removeShow(p) { lib.podcasts = lib.podcasts.filter(x => x.id !== p.id); lib.upNext = lib.upNext.filter(e => e.podcastID !== p.id); delete lib.prefs[p.id]; delete lib.validators[p.id]; reindex(); saveShows(); saveMeta(); emit('library'); emit('queue'); }
@@ -181,41 +205,43 @@ export async function refreshAll() {
       const p = shows[i++], v = lib.validators[p.id] || {};
       const h = {}; if (v.etag) h['If-None-Match'] = v.etag; if (v.modified) h['If-Modified-Since'] = v.modified;
       try {
-        const r = await fetchText(p.feedURL, { headers: h });
-        if (r.status === 304) continue;
-        const fresh = parseFeed(r.text, p.feedURL);
-        fresh.artworkURL = p.artworkURL || fresh.artworkURL; stamp(fresh);
-        const k = lib.podcasts.findIndex(x => x.id === p.id);
-        if (k >= 0 && (fresh.episodes.length !== p.episodes.length || fresh.episodes[0]?.id !== p.episodes[0]?.id || fresh.title !== p.title)) { lib.podcasts[k] = fresh; changed = true; }
+        const r = await loadShow(p.feedURL, { artwork: p.artworkURL, itunesId: p.itunesId, headers: h });
+        if (r.unchanged) continue;
+        const fresh = r.show, k = lib.podcasts.findIndex(x => x.id === p.id);
+        if (k >= 0 && (fresh.episodes.length !== p.episodes.length || fresh.episodes[0]?.id !== p.episodes[0]?.id || fresh.title !== p.title)) {
+          if (fresh.partial && !p.partial) continue;          // never replace a full feed with the directory's shorter list
+          lib.podcasts[k] = fresh; changed = true;
+        }
         lib.validators[p.id] = { etag: r.etag, modified: r.modified };
       } catch (_) {}
     }
   };
-  await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker(), worker(), worker()]);
   if (changed) { reindex(); saveShows(); emit('library'); }
   saveMeta();
   lib.busy--; emit('busy');
 }
 
+let searchSeq = 0;
 export async function search(term) {
+  const my = ++searchSeq;
   lib.busy++; lib.error = null; emit('busy');
   try {
-    const r = await fetch(`https://itunes.apple.com/search?media=podcast&limit=40&term=${encodeURIComponent(term)}`);
-    const j = await r.json();
+    const j = await fetch(`https://itunes.apple.com/search?media=podcast&entity=podcast&limit=40&term=${encodeURIComponent(term)}`).then(r => r.json());
+    if (my !== searchSeq) return;
     lib.results = (j.results || []).filter(x => x.feedUrl);
-    if (!lib.results.length) lib.error = 'No results';
-  } catch (_) { lib.error = 'Search failed'; lib.results = []; }
-  lib.busy--; emit('busy'); emit('search');
+    if (!lib.results.length) lib.error = `No shows found for “${term}”`;
+  } catch (_) { if (my === searchSeq) { lib.error = navigator.onLine ? 'Search failed — try again' : 'You’re offline'; lib.results = []; } }
+  finally { lib.busy--; emit('busy'); emit('search'); }
 }
 
-export async function importOPML(text) {
-  const urls = T.opmlFeeds(text).filter(u => !lib.podcasts.some(p => p.feedURL === u));
+export async function importOPML(text, onProgress) {
+  const feeds = PodenText.opmlFeeds(text).filter(f => !lib.podcasts.some(p => p.feedURL === f.url));
   let added = 0, failed = 0, i = 0;
-  lib.busy++; emit('busy');
-  const w = async () => { while (i < urls.length) { const u = urls[i++]; (await addShow(u)) ? added++ : failed++; } };
+  const failedNames = [];
+  const w = async () => { while (i < feeds.length) { const f = feeds[i++]; (await addShow(f.url, null, null, f.title)) ? added++ : (failed++, failedNames.push(f.title || f.url)); onProgress?.(added + failed, feeds.length); } };
   await Promise.all(Array.from({ length: 6 }, w));
-  lib.busy--; emit('busy');
-  return { added, failed };
+  return { added, failed, total: feeds.length, failedNames };
 }
 
 // ---------- import a Mac-app library export (Poden+ for Mac → "poden-export.json") ----------

@@ -37,6 +37,8 @@ Browsers don't include Apple's sound classifier, so Poden+ web has its own detec
 
 ## Good to know
 
-- **Feeds and CORS:** many podcast hosts don't let web pages read their feeds or audio directly. Poden+ tries directly first, then public relays. For reliability, add your own relay in **Settings → Network**, for example a free Cloudflare Worker.
+- **Feeds and CORS:** most podcast hosts don't let web pages read their feeds. Poden+ tries the direct address and several relays at once, uses whichever answers first, and remembers it per host. If every relay fails, it falls back to Apple's podcast directory, which lists the latest 300 episodes.
+- **Skipping on some hosts:** audio from some hosts, such as Pixel Bento's podtrac links, **plays fine** but can't be *read* by web pages, so it can't be scanned. Those episodes show "Skipping unavailable for this host". Scans imported from Poden+ for Mac still work for them. For full coverage, add your own relay in **Settings → Network**, for example a free Cloudflare Worker.
+- **After an update:** the app always loads the newest version when online and falls back to the saved copy when offline.
 - **Downloads** go into the browser's storage and play offline with instant seeking.
 - **Transcripts:** published transcripts (Podcasting 2.0) are used automatically. Transcripts made by the Mac app come across with the library import.

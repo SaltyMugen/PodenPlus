@@ -261,14 +261,64 @@ T.parseTranscriptJSON = function (d) {
 T.fold = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 T.indexLines = function (tr) { return { l: tr.lines.map(l => T.fold(l.text)), s: tr.lines.map(l => l.start) }; };
 
+// ---------- RSS (regex parser: runs in the worker, ~10× faster than DOMParser, no DOM needed) ----------
+const CDATA = /^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/;
+function inner(src, name) {
+  const re = new RegExp('<' + name + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + name + '>', 'i'), m = re.exec(src);
+  if (!m) return '';
+  const c = CDATA.exec(m[1]); return c ? c[1].trim() : T.plain(m[1]).trim();
+}
+function rawInner(src, name) {
+  const re = new RegExp('<' + name + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + name + '>', 'i'), m = re.exec(src);
+  if (!m) return ''; const c = CDATA.exec(m[1]); return c ? c[1] : m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+}
+function attr(tag, name) { const m = new RegExp('\\b' + name + '\\s*=\\s*("([^"]*)"|\'([^\']*)\')', 'i').exec(tag); return m ? T.plain(m[2] ?? m[3]).trim() : null; }
+function tagOpen(src, name) { const m = new RegExp('<' + name + '\\b[^>]*>', 'i').exec(src); return m ? m[0] : null; }
+function allOpen(src, name) { return src.match(new RegExp('<' + name + '\\b[^>]*>', 'gi')) || []; }
+const MAXSUM = 6000;
+T.parseFeedXML = function (xml, feedURL) {
+  const iFirst = xml.search(/<item[\s>]/i);
+  if (iFirst < 0 && !/<channel[\s>]/i.test(xml)) throw new Error('Not a feed');
+  const head = iFirst < 0 ? xml : xml.slice(0, iFirst);
+  const imgBlock = rawInner(head, 'image');
+  const it = tagOpen(head, 'itunes:image');
+  const show = { feedURL, title: inner(head.replace(/<image[\s\S]*?<\/image>/i, ''), 'title') || feedURL.replace(/^https?:\/\/([^/]+).*/, '$1'),
+    author: inner(head, 'itunes:author') || null, artworkURL: (it && attr(it, 'href')) || (imgBlock && inner(imgBlock, 'url')) || null,
+    language: inner(head, 'language') || null, episodes: [] };
+  const sums = [rawInner(head.replace(/<item[\s\S]*/i, ''), 'description'), rawInner(head, 'itunes:summary')].sort((a, b) => b.length - a.length);
+  show.summary = sums[0] ? T.plain(sums[0]).slice(0, MAXSUM) : null;
+  const re = /<item[\s>][\s\S]*?<\/item>/gi; let m;
+  while ((m = re.exec(xml))) {
+    const x = m[0], enc = tagOpen(x, 'enclosure'), url = enc && attr(enc, 'url'); if (!url) continue;
+    let tr = null;
+    for (const t of allOpen(x, 'podcast:transcript')) { const type = attr(t, 'type') || '', k = ['json', 'vtt', 'srt', 'subrip', 'html', 'plain'].findIndex(y => type.includes(y)), r = k < 0 ? 9 : k; if (!tr || r < tr.rank) tr = { url: attr(t, 'url'), type, rank: r }; }
+    const desc = [rawInner(x, 'content:encoded'), rawInner(x, 'description'), rawInner(x, 'itunes:summary')].sort((a, b) => b.length - a.length)[0];
+    const d = inner(x, 'pubDate'), dur = inner(x, 'itunes:duration'), ii = tagOpen(x, 'itunes:image'), ch = tagOpen(x, 'podcast:chapters');
+    show.episodes.push({ guid: inner(x, 'guid') || null, title: inner(x, 'title') || inner(x, 'itunes:title'), audioURL: url, date: d ? (Date.parse(d) || Date.parse(d.replace(/\s+[A-Z]{2,5}$/, '')) || null) : null,
+      duration: dur ? dur.split(':').reduce((a, b) => a * 60 + (+b || 0), 0) || null : null, summary: desc ? T.plain(desc).slice(0, MAXSUM) : null,
+      artworkURL: ii ? attr(ii, 'href') : null, transcriptURL: tr?.url || null, transcriptType: tr?.type || null, chaptersURL: ch ? attr(ch, 'url') : null });
+  }
+  if (!show.episodes.length) throw new Error('No episodes');
+  return show;
+};
+// Apple's directory: CORS-friendly, used when a host blocks browsers from reading its feed.
+T.itunesShow = function (j, feedURL) {
+  const rs = j.results || [], p = rs.find(r => r.kind === 'podcast' || r.wrapperType === 'track') || {};
+  const eps = rs.filter(r => r.wrapperType === 'podcastEpisode' && r.episodeUrl).map(r => ({ guid: r.episodeGuid || null, title: r.trackName || '', audioURL: r.episodeUrl,
+    date: r.releaseDate ? Date.parse(r.releaseDate) : null, duration: r.trackTimeMillis ? r.trackTimeMillis / 1000 : null, summary: r.description ? T.plain(r.description).slice(0, MAXSUM) : (r.shortDescription || null),
+    artworkURL: null, transcriptURL: null, transcriptType: null, chaptersURL: null }));
+  if (!eps.length) throw new Error('No episodes');
+  eps.sort((a, b) => (b.date || 0) - (a.date || 0));
+  return { feedURL: feedURL || p.feedUrl, title: p.collectionName || p.trackName || 'Podcast', author: p.artistName || null, artworkURL: p.artworkUrl600 || p.artworkUrl100 || null, language: null, summary: null, episodes: eps, itunesId: p.collectionId || null, partial: true };
+};
+
 // ---------- OPML ----------
-T.opmlFeeds = function (xml) {
-  const out = [];
+T.opmlFeeds = function (xml) {                    // → [{ url, title }]
+  const out = [], seen = new Set();
   for (const m of String(xml).matchAll(/<outline\b[^>]*>/gi)) {
-    const a = m[0].match(/\b(?:xmlUrl|xmlurl|url)\s*=\s*("([^"]*)"|'([^']*)')/i);
-    if (!a) continue;
-    const u = T.plain(a[2] ?? a[3]).trim();
-    if (/^https?:/i.test(u) && !out.includes(u)) out.push(u);
+    const u = attr(m[0], 'xmlUrl') || attr(m[0], 'url');
+    if (!u || !/^https?:/i.test(u) || seen.has(u)) continue;
+    seen.add(u); out.push({ url: u, title: attr(m[0], 'title') || attr(m[0], 'text') || '' });
   }
   return out;
 };

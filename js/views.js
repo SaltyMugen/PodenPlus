@@ -21,7 +21,7 @@ export function epRow(e, listKey, showShow = false) {
   const meta = [showShow && e.podcastTitle, e.date && date(e.date), total > 0 && listenLength(total, e)].filter(Boolean).join(' · ');
   const dl = A.an.progress.get(e.id), down = A.isDownloaded(e);
   const dlBtn = dl != null
-    ? `<button class="icon-btn press hov keep" data-act="dl-cancel" data-id="${esc(e.id)}" title="Cancel download" aria-label="Downloading ${Math.round(dl * 100)} percent, cancel"><svg class="ring" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--surface-strong)" stroke-width="2.5"/><circle cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${Math.max(0.03, dl) * 50.3} 60" transform="rotate(-90 10 10)"/><rect x="7.5" y="7.5" width="5" height="5" rx="1" fill="var(--accent)"/></svg></button>`
+    ? `<button class="icon-btn press hov keep" data-act="dl-cancel" data-id="${esc(e.id)}" title="Cancel download" aria-label="Downloading ${Math.round(dl * 100)} percent, cancel"><svg class="ring" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" style="stroke:var(--surface-strong)" stroke-width="2.5"/><circle cx="10" cy="10" r="8" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${Math.max(0.03, dl) * 50.3} 60" transform="rotate(-90 10 10)"/><rect x="7.5" y="7.5" width="5" height="5" rx="1" style="fill:var(--accent)"/></svg></button>`
     : down ? iconBtn('download', 'Remove download', 'dl-del', { size: 16, cls: 'hov keep', attrs: `data-id="${esc(e.id)}"` })
       : iconBtn('downloadO', 'Download', 'dl', { size: 16, cls: 'hov touchhide', attrs: `data-id="${esc(e.id)}"` });
   return `<div class="ep ${cur ? 'current' : ''} ${played ? 'played' : ''}" data-ep="${esc(e.id)}" data-list="${listKey}">
@@ -82,9 +82,11 @@ function savedCard() {
 
 // ---------- Library ----------
 function library() {
-  if (!lib.podcasts.length) return `<div class="page stack gap24">${title('Library')}${empty('library', 'No shows yet', 'Shows you add appear here.', ['Find a Show', 'go:search'])}</div>`;
+  const pend = [...M.adding].filter(([u]) => !lib.podcasts.some(p => p.feedURL === u));
+  if (!lib.podcasts.length && !pend.length) return `<div class="page stack gap24">${title('Library')}${empty('library', 'No shows yet', 'Shows you add appear here.', ['Find a Show', 'go:search'])}</div>`;
   return `<div class="page stack gap24">${title('Library')}<div class="grid">${lib.podcasts.map(p => { const n = M.unplayed(p);
-    return `<button class="tile press" data-act="open-show" data-show="${esc(p.id)}" data-ctx="show-menu">${cover(p.artworkURL, 0).replace('</div>', n ? `<span class="count mono">${n}</span></div>` : '</div>')}<span class="bold callout clamp2">${esc(p.title)}</span></button>`; }).join('')}</div></div>`;
+    return `<button class="tile press" data-act="open-show" data-show="${esc(p.id)}" data-ctx="show-menu">${cover(p.artworkURL, 0).replace('</div>', n ? `<span class="count mono">${n}</span></div>` : '</div>')}<span class="bold callout clamp2">${esc(p.title)}</span></button>`; }).join('')}
+    ${pend.map(([u, x]) => `<div class="tile" aria-busy="true" style="opacity:.6">${cover(x.artwork, 0).replace('</div>', '<span class="count"><span class="spinner"></span></span></div>')}<span class="bold callout clamp2">${esc(x.title)}</span><span class="cap sec">Adding…</span></div>`).join('')}</div></div>`;
 }
 
 // ---------- Up Next ----------
@@ -119,9 +121,9 @@ function search() {
     <label class="search">${icon('search', 18)}<input id="q" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Search shows, transcripts, or paste an RSS link" value="${esc(q)}" aria-label="Search shows and transcripts">${lib.busy ? '<span class="spinner"></span>' : ''}</label>
     <div id="tr-results"></div>
     ${lib.error ? `<p class="sec">${esc(lib.error)}</p>` : ''}
-    ${lib.results.length ? header('Shows') + `<div class="grid">${lib.results.map(r => { const added = lib.podcasts.find(p => p.feedURL === r.feedUrl);
-      return `<div class="tile">${cover(r.artworkUrl600)}<span class="bold callout clamp2">${esc(r.collectionName)}</span><span class="cap sec nowrap">${esc(r.artistName || '')}</span>
-      ${added ? pill('Added', 'open-show', { sym: 'check', attrs: `data-show="${esc(added.id)}"` }) : pill('Add', 'add-show', { sym: 'plus', prominent: true, attrs: `data-url="${esc(r.feedUrl)}" data-art="${esc(r.artworkUrl600 || '')}"` })}</div>`; }).join('')}</div>`
+    ${lib.results.length ? header('Shows') + `<div class="grid">${lib.results.map(r => { const added = lib.podcasts.find(p => p.feedURL === r.feedUrl), busy = M.adding.has(r.feedUrl);
+      return `<div class="tile">${cover(r.artworkUrl600 || r.artworkUrl100)}<span class="bold callout clamp2">${esc(r.collectionName)}</span><span class="cap sec nowrap">${esc(r.artistName || '')}</span>
+      ${added ? pill('Added', 'open-show', { sym: 'check', attrs: `data-show="${esc(added.id)}"` }) : busy ? `<span class="pill" aria-busy="true"><span class="spinner"></span>Adding…</span>` : pill('Add', 'add-show', { sym: 'plus', prominent: true, attrs: `data-url="${esc(r.feedUrl)}" data-art="${esc(r.artworkUrl600 || '')}" data-itunes="${r.collectionId || ''}" data-title="${esc(r.collectionName)}"` })}</div>`; }).join('')}</div>`
       : q.length >= 2 && !/^https?:/.test(q) ? `<p class="callout ter">Press Return to search the podcast directory for “${esc(q)}”.</p>` : ''}</div>`;
 }
 let trSeq = 0;
@@ -279,6 +281,7 @@ export function volume(w = 96) {
 export function detected(e) {
   const a = A.analysis(e.id), st = A.an.status.get(e.id);
   if (st) return `<div class="det"><span class="status">${esc(st)}</span></div>`;
+  if (A.an.blocked.has(e.id)) return `<div class="det"><span class="status" title="The podcast host doesn’t let web pages read its audio. Add a relay in Settings → Network, or import from Poden+ for Mac.">Skipping unavailable for this host · plays normally</span></div>`;
   if (!A.upToDate(e.id)) return `<div class="det"><span class="status">Scanning for interludes and extras…</span></div>`;
   const kinds = [['music', a.music || [], 'var(--music)'], ['trailer', a.trailers || [], 'var(--trailer)']];
   const openK = kinds.find(k => nav.expandedKind === k[0] && k[1].length);

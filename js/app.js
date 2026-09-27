@@ -325,7 +325,7 @@ document.addEventListener('click', ev => {
     case 'q-up': M.moveQueue(+b.dataset.i, -1); break;
     case 'q-down': M.moveQueue(+b.dataset.i, 1); break;
     case 'q-remove': { const x = lib.upNext.find(y => y.id === b.dataset.id); if (x) M.dequeue(x); break; }
-    case 'add-show': M.addShow(b.dataset.url, b.dataset.art || null).then(p => { if (p) { toast('Added ' + p.title); renderPage(true); A.autoDownload(); } }); break;
+    case 'add-show': M.addShow(b.dataset.url, b.dataset.art || null, +b.dataset.itunes || null, b.dataset.title).then(p => { if (p) { toast(`Added ${p.title} · ${p.episodes.length} episodes`); A.autoDownload(); } else toast(lib.error || 'Couldn’t add that show', 4000); renderPage(true); }); renderPage(true); break;
     case 'hit': { const x = lib.byId.get(b.dataset.id); if (x) PL.play(x, M.listFor(x), Math.max(0, +b.dataset.t)); break; }
     case 'seek-note': { const x = e(); if (x) PL.play(x, M.listFor(x), +b.dataset.t); break; }
     case 'go:search': go('search'); break;
@@ -357,9 +357,14 @@ document.addEventListener('click', ev => {
     case 'tr-smaller': M.set('transcriptSize', Math.max(12, settings.transcriptSize - 2)); break;
     case 'tr-larger': M.set('transcriptSize', Math.min(34, settings.transcriptSize + 2)); break;
     case 'theme': M.set('theme', b.dataset.v); break;
-    case 'opml-import': pickFile('.opml,.xml,text/xml', async t => { const r = await M.importOPML(t); toast(r.added || r.failed ? `Added ${r.added} show${r.added === 1 ? '' : 's'}${r.failed ? ` · ${r.failed} couldn’t be loaded` : ''}` : 'No new shows in that file'); A.autoDownload(); }); break;
+    case 'opml-import': pickFile('', async t => {
+      if (!/<outline/i.test(t)) { toast('That file isn’t an OPML subscription list', 4000); return; }
+      toast('Importing…', 60000);
+      const r = await M.importOPML(t, (d, n) => toast(`Importing ${d} of ${n}…`, 60000));
+      toast(r.total ? `Added ${r.added} of ${r.total} show${r.total === 1 ? '' : 's'}${r.failed ? ` · couldn’t load: ${r.failedNames.slice(0, 3).join(', ')}${r.failed > 3 ? '…' : ''}` : ''}` : 'Those shows are already in your Library', 5000);
+      A.autoDownload(); if (nav.tab !== 'library') go('library'); }); break;
     case 'opml-export': save('Poden subscriptions.opml', self.PodenText.opmlExport(lib.podcasts), 'text/x-opml'); break;
-    case 'backup-import': pickFile('.json,application/json', async t => { try { await M.importBackup(JSON.parse(t)); await A.loadAll(); PL.restore(); toast('Library imported'); renderPage(); } catch (err) { toast('That file couldn’t be read'); } }); break;
+    case 'backup-import': pickFile('', async t => { try { await M.importBackup(JSON.parse(t)); await A.loadAll(); PL.restore(); toast('Library imported'); renderPage(); } catch (err) { toast('That file couldn’t be read'); } }); break;
     case 'backup-export': save('Poden library.json', JSON.stringify(M.exportBackup()), 'application/json'); break;
     case 'shortcuts': shortcuts(); break;
     default:
@@ -385,11 +390,18 @@ document.addEventListener('input', ev => {
 document.addEventListener('keydown', async ev => {
   if (ev.target.id === 'q' && ev.key === 'Enter') {
     const q = nav.query.trim(); if (!q) return; ev.target.blur();
-    if (/^https?:\/\//i.test(q)) { const p = await M.addShow(q); if (p) { nav.query = ''; openShow(p.id); A.autoDownload(); } else renderPage(true); }
+    if (/^https?:\/\//i.test(q)) { renderPage(true); const p = await M.addShow(q); if (p) { nav.query = ''; openShow(p.id); A.autoDownload(); } else { toast(lib.error || 'Couldn’t load that feed', 4000); renderPage(true); } }
     else { await M.search(q); renderPage(true); }
   }
 });
-function pickFile(accept, then) { const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.onchange = async () => { const f = i.files[0]; if (f) then(await f.text()); }; i.click(); }
+// File picker. iOS greys out files whose type it doesn't know (.opml), so OPML accepts anything and the
+// contents are checked instead. The input must be in the document for Safari to fire 'change'.
+function pickFile(accept, then) {
+  const i = document.createElement('input'); i.type = 'file'; if (accept) i.accept = accept;
+  i.style.cssText = 'position:fixed;left:-9999px;opacity:0'; document.body.append(i);
+  i.addEventListener('change', async () => { const f = i.files[0]; i.remove(); if (f) { try { then(await f.text()); } catch (_) { toast('That file couldn’t be read'); } } }, { once: true });
+  i.click();
+}
 function save(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 
 // ---------- keyboard (same shortcuts as the Mac app) ----------

@@ -1,7 +1,7 @@
 // Analyzer (page side): queues episodes, fetches audio, hands work to the worker, stores results.
 // Downloads (Cache Storage) and chapters also live here — they share the audio fetch.
 import { idb, ls, AUDIO_CACHE, audioKey } from './store.js';
-import { lib, settings, emit, podcast, isHeard, inProgress, fetchText } from './model.js';
+import { lib, settings, emit, podcast, isHeard, inProgress, fetchText, routes, setParser } from './model.js';
 const T = self.PodenText;
 
 // ---------- worker ----------
@@ -13,6 +13,7 @@ function w() {
   worker.onerror = e => { for (const c of calls.values()) c.rej(new Error('worker')); calls.clear(); worker = null; };
   return worker;
 }
+setParser((text, url) => call('feed', { text, url }));
 export function call(type, data, transfer = [], onp) { const id = ++seq; return new Promise((res, rej) => { calls.set(id, { res, rej, onp }); w().postMessage({ ...data, type, id }, transfer); }); }
 
 // ---------- state ----------
@@ -26,6 +27,7 @@ export const an = {
   index: new Map(),           // id → { l: [folded lines], s: [starts] }
   downloads: new Map(ls.get('downloads', [])),   // id → { size, date }
   progress: new Map(),        // id → 0..1 while downloading
+  blocked: new Set(),         // ids whose host blocks web pages from reading the audio
 };
 const saveDownloads = () => ls.set('downloads', [...an.downloads]);
 export const analysis = id => an.analyses.get(id) || { music: [], trailers: [], ads: [], silence: [], repeats: [], scanned: false };
@@ -97,7 +99,8 @@ export const onUpdate = new Set();
 export function prioritize(e) { if (!e) return; const i = queue.findIndex(x => x.id === e.id); if (i >= 0) queue.splice(i, 1); if (needsWork(e)) { queue.unshift(e); pump(); } }
 export function enqueue(e) { if (!queue.some(x => x.id === e.id) && needsWork(e)) { queue.push(e); pump(); } }
 export function prepare(list) { for (const e of list.slice(0, 3)) enqueue(e); }
-function needsWork(e) { return !upToDate(e.id) || (an.transcripts.get(e.id) == null && !analysis(e.id).transcriptTried && e.transcriptURL); }
+const noScan = new Set();
+function needsWork(e) { if (noScan.has(e.id) && !settings.relay) return false; return !upToDate(e.id) || (an.transcripts.get(e.id) == null && !analysis(e.id).transcriptTried && e.transcriptURL); }
 
 async function pump() {
   if (running || !queue.length) return;
@@ -116,7 +119,11 @@ async function process(e) {
   if (!upToDate(id)) {
     setStatus(id, 'Fetching audio to scan');
     const buf = await audioBuffer(e, p => setStatus(id, `Fetching audio ${Math.round(p * 100)}%`));
-    if (!buf) { setStatus(id, navigator.onLine ? 'Couldn’t fetch audio to scan' : null); return; }
+    if (!buf) {
+      // This host doesn't let web pages read its audio (it still plays fine). Remember it so we don't
+      // retry on every play; a relay in Settings, or a Mac library import, brings the scan.
+      noScan.add(e.id); setStatus(id, null); an.blocked.add(id); emit('status'); return;
+    }
     setStatus(id, 'Scanning audio');
     let r;
     const onp = p => setStatus(id, `Scanning audio ${Math.round(p * 100)}%`);
@@ -215,11 +222,14 @@ async function audioBuffer(e, onp) {
   try { const r = await fetchAudio(e.audioURL, onp); return r ? await r.blob().then(b => b.arrayBuffer()) : null; } catch (_) { return null; }
 }
 async function fetchAudio(url, onp, signal) {
-  const tries = [url];
-  if (settings.relay) tries.push(settings.relay.includes('{url}') ? settings.relay.replace('{url}', encodeURIComponent(url)) : settings.relay + encodeURIComponent(url));
+  // Audio: direct first (most CDNs allow it), then your own relay. Public relays cap file sizes, so
+  // they're only used for small files.
+  const tries = routes(url).filter((u, i) => i === 0 || u === url || (settings.relay && !/corsfix|codetabs|allorigins/.test(u)));
+  if (!tries.includes(url)) tries.unshift(url);
   for (const u of tries) {
     try {
       const res = await fetch(u, { signal, mode: 'cors' });
+      if (res.type === 'opaque') continue;
       if (!res.ok) continue;
       const len = +res.headers.get('content-length') || 0;
       if (!onp || !res.body || !len) return res;

@@ -33,10 +33,9 @@ function build(v) {
   const t = A.an.transcripts.get(e.id), tt = A.an.timed.get(e.id);
   if (!t || !tt || !tt.lines.length) {
     v.tt = null;
-    const st = A.an.status.get(e.id);
-    const msg = st ? esc(st) : t === undefined ? 'Loading transcript…' : A.analysis(e.id).transcriptTried || !e.transcriptURL ? (e.transcriptURL ? 'No speech could be transcribed.' : 'No transcript for this episode yet.') : 'No transcript yet.';
+    const msg = t === undefined ? 'Loading transcript…' : e.transcriptURL ? 'This show’s transcript couldn’t be loaded.' : 'This show doesn’t publish transcripts.';
     el.classList.remove('live');
-    el.innerHTML = `<div class="empty" style="height:100%;justify-content:center">${icon('bubble', 28)}<p class="callout">${msg}</p>${t === undefined || st || e.transcriptURL ? '' : '<p class="cap ter">Shows that publish transcripts get them automatically. Transcripts made by Poden+ for Mac come across with a library import (Settings → Library).</p>'}</div>`;
+    el.innerHTML = `<div class="empty" style="height:100%;justify-content:center">${icon('bubble', 28)}<p class="callout">${msg}</p>${t === undefined || e.transcriptURL ? '' : '<p class="cap ter">Transcripts made by Poden+ for Mac come across with a library import (Settings → Library).</p>'}</div>`;
     return;
   }
   if (v.tt === tt && el.firstElementChild?.classList.contains('ln')) return;

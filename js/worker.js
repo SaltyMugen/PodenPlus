@@ -24,6 +24,8 @@ self.onmessage = async (e) => {
       self.postMessage({ id: m.id, ok: true, result: post(m) });
     } else if (m.type === 'timed') {                         // build the reading model for a transcript
       self.postMessage({ id: m.id, ok: true, result: PodenText.timed(m.transcript) });
+    } else if (m.type === 'feed') {
+      self.postMessage({ id: m.id, ok: true, result: PodenText.parseFeedXML(m.text, m.url) });
     } else if (m.type === 'index') {
       self.postMessage({ id: m.id, ok: true, result: PodenText.indexLines(m.transcript) });
     }

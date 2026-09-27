@@ -52,8 +52,11 @@ const I = {
 };
 // Skip buttons: circular arrow with the interval inside, like SF Symbols' gobackward.15.
 export function skipIcon(forward, seconds, size) {
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${I[forward ? 'fwd' : 'back']}<text x="12" y="16.2" text-anchor="middle" font-size="${seconds >= 100 ? 7 : 8.5}" font-weight="800" fill="currentColor" font-family="ui-rounded,-apple-system,system-ui,sans-serif">${seconds}</text></svg>`;
+  return `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" style="width:${size}px;height:${size}px" focusable="false" aria-hidden="true">${I[forward ? 'fwd' : 'back']}<text x="12" y="16.2" text-anchor="middle" font-size="${seconds >= 100 ? 7 : 8.5}" font-weight="800" fill="currentColor" font-family="ui-rounded,-apple-system,system-ui,sans-serif">${seconds}</text></svg>`;
 }
+const cache = new Map();
 export function icon(name, size = 16, cls = '') {
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"${cls ? ` class="${cls}"` : ''}>${I[name] || ''}</svg>`;
+  const k = name + size + cls; let v = cache.get(k);
+  if (!v) { v = `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" width="${size}" height="${size}" style="width:${size}px;height:${size}px" focusable="false" aria-hidden="true">${I[name] || ''}</svg>`; cache.set(k, v); }
+  return v;
 }
