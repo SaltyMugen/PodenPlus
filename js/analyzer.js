@@ -137,19 +137,30 @@ async function process(e) {
     a = { ...a, music: r.music, trailers: r.trailers, silence: r.silence, scanned: true, version: CURRENT, duration: r.duration };
     const tr = an.transcripts.get(id);
     const wantAuto = !!(tr && !e.chaptersURL && noteChapters(e).length < 2);
-    const post = await call('post', { analysis: a, transcript: tr || null, duration: r.duration, wantChapters: wantAuto });
+    const post = await call('post', { analysis: a, transcript: tr || null, duration: r.duration, wantChapters: wantAuto, slots: slots(e) });
     a = post.analysis;
     if (post.chapters?.length) { an.autoChapters.set(id, post.chapters); idb.set('chapters', id, { list: post.chapters, auto: true }); emit('chapters'); }
     // repeats: compare with this show's recent fingerprints
     await repeats(e, r.fingerprint, a);
-  } else if (an.transcripts.get(id) && (a.adsVersion || 0) < 3) {
-    const post = await call('post', { analysis: a, transcript: an.transcripts.get(id) });
+  } else if (an.transcripts.get(id) && (a.adsVersion || 0) < 4) {
+    const post = await call('post', { analysis: a, transcript: an.transcripts.get(id), duration: a.duration || e.duration || 0, slots: slots(e) });
     a = post.analysis;
   }
   a.transcriptTried = true;
   an.analyses.set(id, a); await idb.set('analysis', id, a);
   setStatus(id, null);
   emit('analysis'); for (const f of onUpdate) f(id);
+}
+
+/// Does this show open / close with an ad? Learned from its scanned episodes (two or more agree).
+function slots(e) {
+  let pre = 0, post = 0;
+  for (const [id, a] of an.analyses) {
+    if (!id.startsWith((e.podcastID || '') + '#') || !a.ads) continue;
+    if (a.ads.some(s => s.start < 3)) pre++;
+    if (a.duration && a.ads.some(s => s.end > a.duration - 3)) post++;
+  }
+  return { preroll: pre >= 2, postroll: post >= 2 };
 }
 
 async function repeats(e, fp, a) {

@@ -216,7 +216,7 @@ export const transcriptTools = () => `<span class="row g6">${iconBtn('aSmall', '
 function settingsPage() {
   const s = settings, g = (t, body, foot) => `<div class="group stack gap6"><span class="eyebrow">${esc(t)}</span><div class="card">${body}</div>${foot ? `<p class="foot">${foot}</p>` : ''}</div>`;
   const row = (l, c) => `<div class="srow"><span class="lbl">${l}</span>${c}</div>`;
-  const themes = [['classic', 'Poden+', '#000', '#000', '#fff', '#ffd100', 'rgba(255,255,255,.13)'], ['girly', 'Blossom', '#ffdbed', '#fae6ff', '#5c0d38', '#b80f66', 'rgba(204,26,115,.13)'], ['gamer', 'Arcade', '#120d29', '#050d17', '#edf2ff', '#38e6ff', 'rgba(153,179,255,.13)'], ['cover', 'Cover', 'var(--cv-bg2,#1a1300)', 'var(--cv-bg3,#0a0700)', 'var(--cv-ink,#fff)', 'var(--cv-accent,#ffd100)', 'rgba(255,255,255,.13)']];
+  const themes = [['classic', 'Poden+', '#000', '#000', '#fff', '#ffd100', 'rgba(255,255,255,.13)'], ['girly', 'Blossom', '#ffdbed', '#fae6ff', '#5c0d38', '#b80f66', 'rgba(204,26,115,.13)'], ['mono', 'Mono', '#000', '#000', '#fff', '#dbdbdb', 'rgba(255,255,255,.13)'], ['cover', 'Cover', 'var(--cv-bg2,#1a1300)', 'var(--cv-bg3,#0a0700)', 'var(--cv-ink,#fff)', 'var(--cv-accent,#ffd100)', 'rgba(255,255,255,.13)']];
   const modeSeg = k => seg([2, 1, 0], s[k], 'set-' + k, M.modeTitle);
   return `<div class="page settings stack gap28">${title('Settings')}
   ${g('Theme', `<div class="themes" style="padding:6px">${themes.map(([id, name, b1, b2, ink, acc, surf]) => `<button class="tp press ${s.theme === id ? 'on' : ''}" data-act="theme" data-v="${id}" aria-pressed="${s.theme === id}" title="${id === 'cover' ? 'Colours from the cover of the episode that’s playing' : name}" style="--pv-accent:${acc}">

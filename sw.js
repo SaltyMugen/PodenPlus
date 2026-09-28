@@ -1,6 +1,6 @@
 // Poden+ service worker: instant start (app shell from cache, updated in the background),
 // offline playback of downloads with proper range requests (needed for seeking), images cached.
-const V = 'poden-v2';
+const V = 'poden-v3';
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'js/app.js', 'js/model.js', 'js/player.js', 'js/views.js', 'js/analyzer.js', 'js/ui.js', 'js/transcript.js',
   'js/store.js', 'js/icons.js', 'js/textlib.js', 'js/detect-core.js', 'js/detect-model.js', 'js/worker.js', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 const AUDIO = 'poden-audio', IMG = 'poden-img';

@@ -80,8 +80,9 @@ function post(m) {
   const tr = m.transcript;
   if (tr && tr.lines && tr.lines.length) {
     const words = PodenText.words(tr);
-    a.ads = D.subtract(PodenText.languageAds(words), a.music.concat(a.trailers), 4.5);
-    a.adsVersion = 3;
+    const ads = D.merge(PodenText.languageAds(words).concat(PodenText.sponsors(tr, m.duration || 0, m.slots)), 1.5);
+    a.ads = D.subtract(ads, a.music.concat(a.trailers), 4.5);
+    a.adsVersion = 4;
     if (tr.generated && self.__lastScan) a = voids(a, tr, self.__lastScan, m.duration);
   }
   self.__lastScan = null;

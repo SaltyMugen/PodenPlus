@@ -133,6 +133,117 @@ T.languageAds = function (words) {
   return PodenDetect.merge(other, 1.5).filter(s => s.end - s.start > 4.5);
 };
 
+// ---------- same-language ads & sponsor reads (same cues and rules as the Mac / iPhone app) ----------
+// Each cue is [keyword, pattern]: the pattern only runs on lines containing the keyword.
+const SP_STRONG = [
+  ['code', /\bcodes? (promo|de reduction|avantage|reduc)\b/],
+  ['code', /\bpromo ?code\b/],
+  ['code', /\b(use|avec|utilise[rz]?) (the |le )?code\b/],
+  ['sponsor', /\bsponsoris/],
+  ['sponsor', /\bsponsored by\b/],
+  ['brought', /\bbrought to you by\b/],
+  ['offert', /\boffert par\b/],
+  ['partenaire', /\b(notre|nos) (sponsor|partenaire)s?\b/],
+  ['sponsor', /\b(notre|nos) sponsors?\b/],
+  ['partenariat', /\ben partenariat avec\b/],
+  ['description', /\blien (en|dans la) description\b/],
+  ['link', /\blink in (the )?(description|show notes)\b/],
+  ['www', /\bwww\b/],
+  ['http', /\bhttps?\b/],
+  ['.com', /[a-z0-9]{3,}\.com\b/],
+  ['.net', /[a-z0-9]{3,}\.net\b/],
+  ['.io', /[a-z0-9]{3,}\.io\b/],
+  ['.shop', /[a-z0-9]{3,}\.(shop|store)\b/],
+  ['.store', /[a-z0-9]{3,}\.store\b/],
+  ['dot ', /[a-z0-9]{3,} dot (com|net|io)\b/],
+  ['point ', /[a-z0-9]{3,} point (com|net|io)\b/],
+  ['slash', /\bslash [a-z]/],
+  ['mois', /\bpremier mois (offert|gratuit)\b/],
+  ['trial', /\bfree trial\b/],
+  ['essai', /\bessai gratuit\b/],
+  ['%', /\b\d{1,2} ?% (de reduction|off|de remise)\b/],
+  ['cent', /\b\d{1,2} ?(pour ?cent|percent) (de reduction|off|de remise)\b/],
+  ['jusqu', /\bjusqu'a \d{1,2} ?%/],
+  ['livraison', /\blivraison (offerte|gratuite)\b/],
+  ['shipping', /\bfree shipping\b/],
+  ['recrut', /\bnous recrutons\b/],
+  ['cherchons', /\bnous cherchons des\b/],
+  ['hiring', /\bwe're hiring\b/],
+  ['postule', /\bpostule[rz]\b/],
+  ['offre', /\boffre (speciale|exclusive|limitee)\b/],
+  ['limited', /\blimited time\b/],
+  ['sign up', /\bsign up (today|now)\b/],
+  ['inscri', /\binscri(vez|s)-vous (des maintenant|gratuitement|sur)\b/],
+  ['codigo', /\bcodigo (promocional|de descuento)\b/],
+  ['gutschein', /\bgutscheincode\b/],
+  ['rabatt', /\brabattcode\b/]
+];
+const SP_WEAK = [
+  ['rendez-vous', /\brendez-vous sur\b/],
+  ['disponible', /\bdisponible (des maintenant|des aujourd'hui|en magasin|partout)\b/],
+  ['en vente', /\ben vente\b/],
+  ['commande', /\bcommande[rz]\b/],
+  ['app store', /\bapp store\b/],
+  ['telecharge', /\btelecharge[rz]\b/],
+  ['seulement', /\bpour seulement\b/],
+  ['euro', /\b\d+ ?euros\b/],
+  ['€', /\d ?€/],
+  ['dollar', /\b\d+ ?dollars\b/],
+  ['$', /\$ ?\d/],
+  ['download', /\bdownload\b/],
+  ['order', /\border (now|today)\b/],
+  ['gratuitement', /\bgratuitement\b/],
+  ["j'aime", /\bj'aime (bosser|travailler)\b/],
+  ['deliver', /\bdeliver(y|ies)\b/],
+  ['now open', /\bnow open\b/],
+  ['brand new', /\bbrand new\b/]
+];
+const SP_BREAK = [
+  ['pub', /s'il y a de la pub/],
+  ['pub', /\bpause pub\b/],
+  ['pub', /\bpage de pub/],
+  ['pub', /\bapres (la|une|cette) (petite )?pub/],
+  ['pub', /\bplace a la pub/],
+  ['partenaires', /\bmessage de nos partenaires\b/],
+  ['apres', /\bon se retrouve (juste )?apres (la|une|cette) (pub|pause)\b/],
+  ['break', /\bafter (the|this) break\b/],
+  ['be right back', /\bwe'll be right back\b/],
+  ['sponsor', /\ba word from our sponsors?\b/],
+  ['messages', /\bafter these messages\b/],
+  ['publicidad', /\bdespues de (la )?publicidad\b/],
+  ['werbung', /\bnach der werbung\b/]
+];
+const SP_RETURN = [/^(et )?(on|nous) (va |allons )?(continue|reprend|revient|est de retour|sommes de retour)/, /^(et )?(de )?retour\b/, /^welcome back/, /^we're back/, /^(et )?on va continuer/, /^(bon|alors|donc|voila),? (on|nous) (continue|reprend)/];
+const foldT = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const countCues = (list, s) => { let n = 0; for (const [k, r] of list) if (s.includes(k) && r.test(s)) n++; return n; };
+// `slots`: { preroll, postroll } — only shows known to open / close with an ad get the lighter test there.
+T.sponsors = function (tr, duration, slots) {
+  slots = slots || {};
+  const lines = tr.lines.filter(l => l.start >= 0 && l.end > l.start);
+  if (!lines.length) return [];
+  const f = lines.map(l => foldT(l.text)), sc = f.map(s => [countCues(SP_STRONG, s), countCues(SP_WEAK, s)]);
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    if (!sc[i][0] && !sc[i][1]) { i++; continue; }
+    let a = i, b = i, st = sc[i][0], wk = sc[i][1], j = i + 1;
+    while (j < lines.length && lines[j].start - lines[b].end < 4 && lines[j].end - lines[a].start <= 120) {
+      if (sc[j][0] + sc[j][1]) { b = j; st += sc[j][0]; wk += sc[j][1]; } else if (j - b > 1) break;
+      j++;
+    }
+    if (a > 0 && lines[a].start - lines[a - 1].end < 1 && !sc[a - 1][0] && !sc[a - 1][1] && lines[a - 1].end - lines[a - 1].start < 20 && lines[b].end - lines[a - 1].start <= 120) a--;
+    const s = lines[a].start, e = lines[b].end, slot = (slots.preroll && s < 90) || (slots.postroll && duration > 0 && e > duration - 150);
+    if (e - s >= 10 && e - s <= 120 && st >= 1 && st + wk >= (slot ? 1 : 3)) out.push({ start: s, end: e });
+    i = b + 1;
+  }
+  for (let k = 0; k < lines.length - 1; k++) {
+    if (!countCues(SP_BREAK, f[k].slice(-160))) continue;
+    const start = lines[k + 1].start; let e = lines[k + 1].end, n = sc[k + 1][0] + sc[k + 1][1], m = k + 2;
+    while (m < lines.length && lines[m].start - e < 1.5 && lines[m].end - start <= 95 && !SP_RETURN.some(r => r.test(f[m].slice(0, 60)))) { e = lines[m].end; n += sc[m][0] + sc[m][1]; m++; }
+    if (e - start >= 8 && n >= 1) out.push({ start, end: e });
+  }
+  return PodenDetect.merge(out, 2);
+};
+
 // ---------- transcript voids ----------
 T.speech = function (tr) {
   const out = [];

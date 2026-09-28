@@ -22,7 +22,8 @@ export const plural = k => k === 'silence' ? 'silence' : noun(k) + 's';
 const DEF = { skipBack: 15, skipForward: 30, musicMode: 2, trailerMode: 2, adMode: 2, textScale: 1.15, skipSilence: false, autoDownload: 0,
   generateTranscripts: true, transcriptSize: 18, removePlayed: true, theme: 'classic', rate: 1, volume: 1, relay: '', hideHeard: false, npTab: 'transcript', miniTab: 'transcript', follow: true };
 export const settings = Object.assign({}, DEF, ls.get('settings', {}));
-if (['clear', 'manga', 'uzumaki'].includes(settings.theme)) settings.theme = 'classic';
+if (['gamer', 'manga'].includes(settings.theme)) settings.theme = 'mono';
+if (!['classic', 'girly', 'mono', 'cover'].includes(settings.theme)) settings.theme = 'classic';
 export function set(k, v) { settings[k] = v; ls.set('settings', settings); emit('settings'); emit('settings.' + k); }
 export const OPTIONS = { back: [5, 10, 15, 30, 45, 60], forward: [10, 15, 30, 45, 60, 90], downloads: [0, 1, 2, 3, 5, 10], scales: [1, 1.15, 1.3, 1.45], rates: [0.75, 1, 1.25, 1.5, 1.75, 2] };
 export const scaleName = s => s <= 1 ? 'Small' : s <= 1.15 ? 'Default' : s <= 1.3 ? 'Large' : 'Larger';

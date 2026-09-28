@@ -20,10 +20,10 @@
   --bg:#ffedf5;--bg2:#ffdbed;--bg3:#fae6ff;--ink:92,13,56;--accent:#b80f66;--on-accent:#fff;
   --music:#1f031f;--trailer:#006b9e;--ad:#9e5c00;--tint:204,26,115;--sec:.8;--ter:.7;color-scheme:light;
 }
-/* Arcade */
-[data-theme=gamer]{
-  --bg:#09091300;--bg:#090913;--bg2:#120d29;--bg3:#050d17;--ink:237,242,255;--accent:#38e6ff;--on-accent:#050a17;
-  --music:#a85cff;--trailer:#ff5c9e;--ad:#ffb833;--tint:153,179,255;--sec:.74;--ter:.58;color-scheme:dark;
+/* Mono — pure black, white text, greys */
+[data-theme=mono]{
+  --bg:#000;--bg2:#000;--bg3:#000;--ink:255,255,255;--accent:#dbdbdb;--on-accent:#000;
+  --music:#9e9e9e;--trailer:#6b6b6b;--ad:#d1d1d1;--tint:255,255,255;--sec:.72;--ter:.56;color-scheme:dark;
 }
 :root{
   --primary:rgb(var(--ink));--secondary:rgba(var(--ink),var(--sec));--tertiary:rgba(var(--ink),var(--ter));
